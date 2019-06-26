@@ -17,3 +17,8 @@ endif
 if RECORDER_PLUGIN
 SUBDIRS               += mrcp-recorder
 endif
+
+if PQRECOG_PLUGIN
+SUBDIRS               += pq-recog
+endif
+

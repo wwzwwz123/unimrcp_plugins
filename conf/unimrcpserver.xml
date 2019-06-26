@@ -27,10 +27,11 @@
   <components>
     <!-- Factory of MRCP resources -->
     <resource-factory>
-      <resource id="speechsynth" enable="true"/>
-      <resource id="speechrecog" enable="true"/>
-      <resource id="recorder" enable="true"/>
-      <resource id="speakverify" enable="true"/>
+      <resource id="speechsynth" enable="false"/>
+      <resource id="speechrecog" enable="false"/>
+      <resource id="recorder" enable="false"/>
+      <resource id="speakverify" enable="fasle"/>
+      <resource id="pqrecog" name="pqrecog" enable="true"/>
     </resource-factory>
 
     <!-- SofiaSIP MRCPv2 signaling agent -->

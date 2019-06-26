@@ -17,6 +17,11 @@ if DEMORECOG_PLUGIN
 DATAFILES           += result.xml
 endif
 
+if PQRECOG_PLUGIN
+DATAFILES           += result.xml
+endif
+
+
 if DEMOVERIFIER_PLUGIN
 DATAFILES           += result-verification.xml
 endif
