@@ -43,6 +43,7 @@
 
 #define RECOG_ENGINE_TASK_NAME "PQ Recog Engine"
 
+FILE* file = NULL;
 typedef struct pq_recog_engine_t pq_recog_engine_t;
 typedef struct pq_recog_channel_t pq_recog_channel_t;
 typedef struct pq_recog_msg_t pq_recog_msg_t;
@@ -50,7 +51,7 @@ typedef struct pq_recog_msg_t pq_recog_msg_t;
 
 
 typedef struct WriteThis WriteThis;
-struct WriteThis {
+static const struct WriteThis {
   apt_bool_t bhead;
   apt_bool_t bvoice;
   apt_bool_t bend;
@@ -71,6 +72,7 @@ static apt_bool_t pq_recog_engine_destroy(mrcp_engine_t *engine);
 static apt_bool_t pq_recog_engine_open(mrcp_engine_t *engine);
 static apt_bool_t pq_recog_engine_close(mrcp_engine_t *engine);
 static mrcp_engine_channel_t* pq_recog_engine_channel_create(mrcp_engine_t *engine, apr_pool_t *pool);
+static int post(pq_recog_channel_t *recog_channel);
 
 static const struct mrcp_engine_method_vtable_t engine_vtable = {
 	pq_recog_engine_destroy,
@@ -151,9 +153,10 @@ struct pq_recog_channel_t {
 	
 	int                     total_size;
     unsigned char*          buffer;
-	WriteThis*              wt;
+	WriteThis               wt;
 	pthread_mutex_t         mutex;
 	stream_status           status;
+       // pthread_t               post_thread;
 	
 	
 };
@@ -266,14 +269,14 @@ static mrcp_engine_channel_t* pq_recog_engine_channel_create(mrcp_engine_t *engi
 	recog_channel->last_result = NULL;
 	recog_channel->recog_started = FALSE;
 	recog_channel->buffer = NULL;
-	recog_channel->wt->bend = FALSE;
-	recog_channel->wt->bhead = FALSE;
-	recog_channel->wt->bvoice = FALSE;
+	recog_channel->wt.bend = FALSE;
+	recog_channel->wt.bhead = FALSE;
+	recog_channel->wt.bvoice = FALSE;
 	
 	recog_channel->filename = "/root/tts.wav";
-	recog_channel->url = "http://1.202.136.28:1480/QianYuSrv/uploader?aaa=1";
+	recog_channel->url = "http://1.202.136.28:8086/QianYuSrv/uploader?aaa=1";
 	recog_channel->host= "1.202.136.28";
-	recog_channel->head_str = "------------V2ymHFg03ehbqgZCaKO6jy\r\nContent-Disposition: form-data;name=\"/root/tts.wav\";opcode=\"transcribe_audio\";sessionid=\"session:1\";tmp_entry_id=\"2107512132\";filename=\"/root/tts.wav\";type=\"21\";time=\"1528968385149\";reqid=\"485969d2-0c93-42cd-bcd5-4f3c1ccabccb\";latitude=\"-1\";location=\"-1\";language=\"chinese\";uId=\"null\";kId=\"102\";aId=\"TEST-APP-ID\";grammarname=\"\";contentId=\"session:1\";sceneId=\"-1\";sr=\"1\";isAddPunct=\"off\";isTransDigit=\"on\";isButterFly=\"off\";\r\n\r\n";
+	recog_channel->head_str = "------------V2ymHFg03ehbqgZCaKO6jy\r\nContent-Disposition: form-data;name=\"/root/tts.wav\";opcode=\"transcribe_audio\";sessionid=\"session:1\";tmp_entry_id=\"2107512132\";filename=\"/root/tts.wav\";type=\"11\";time=\"1528968385149\";reqid=\"485969d2-0c93-42cd-bcd5-4f3c1ccabccb\";latitude=\"-1\";location=\"-1\";language=\"chinese\";uId=\"null\";kId=\"102\";aId=\"TEST-APP-ID\";grammarname=\"\";contentId=\"session:1\";sceneId=\"-1\";sr=\"1\";isAddPunct=\"off\";isTransDigit=\"on\";isButterFly=\"off\";\r\n\r\n";
 	recog_channel->end_str = "\r\n------------V2ymHFg03ehbqgZCaKO6jy--\r\n";
 	
 	recog_channel->bhead_sizeleft = strlen(recog_channel->head_str);
@@ -507,7 +510,22 @@ void pq_recog_end_session(pq_recog_channel_t *recog_channel){
 /* Raise pq RECOGNITION-COMPLETE event */
 static apt_bool_t pq_recog_recognition_complete(pq_recog_channel_t *recog_channel, mrcp_recog_completion_cause_e cause)
 {
-        
+    apt_log(RECOG_LOG_MARK,APT_PRIO_WARNING,"[pq] recognition_complete start ------------------------------------\n");
+
+	recog_channel->status = RECOGNITION_COMPLETE;
+
+
+        apt_log(RECOG_LOG_MARK, APT_PRIO_WARNING, " PQ POST\r\n");
+	if(post(recog_channel)<0) {
+		apt_log(RECOG_LOG_MARK,APT_PRIO_WARNING,"[pq] post false -----------------------------\n");
+	}else{
+		apt_log(RECOG_LOG_MARK,APT_PRIO_WARNING,"[pq] post sucess -----------------------------\n");
+	}
+
+
+	apt_log(RECOG_LOG_MARK,APT_PRIO_WARNING,"[pq] recognition_complete  status = RECOGNITION_COMPLETE----------------------------------\n");
+	
+
 	pq_recog_stream_recog(recog_channel, NULL, 0);
 	pq_recog_end_session(recog_channel);
 
@@ -518,6 +536,7 @@ static apt_bool_t pq_recog_recognition_complete(pq_recog_channel_t *recog_channe
 						recog_channel->recog_request,
 						RECOGNIZER_RECOGNITION_COMPLETE,
 						recog_channel->recog_request->pool);
+						
 	if(!message) {
 		return FALSE;
 	}
@@ -545,15 +564,20 @@ static apt_bool_t pq_recog_recognition_complete(pq_recog_channel_t *recog_channe
 /** Callback is called from MPF engine context to write/send new frame */
 static apt_bool_t pq_recog_stream_write(mpf_audio_stream_t *stream, const mpf_frame_t *frame)
 {
+	apt_log(RECOG_LOG_MARK,APT_PRIO_WARNING," stream write ----------------------------------\n");
+        //apt_log(RECOG_LOG_MARK, APT_PRIO_WARNING, " pq_recog_stream_write ");
 	pq_recog_channel_t *recog_channel = stream->obj;
 	if(recog_channel->stop_response) {
+                apt_log(RECOG_LOG_MARK, APT_PRIO_WARNING, " pq_recog_stream_recog stop_response");
 		/* send asynchronous response to STOP request */
 		mrcp_engine_channel_message_send(recog_channel->channel,recog_channel->stop_response);
 		recog_channel->stop_response = NULL;
 		recog_channel->recog_request = NULL;
 		return TRUE;
 	}
-
+    if(frame->codec_frame.size) {
+		pq_recog_stream_recog(recog_channel, frame->codec_frame.buffer, frame->codec_frame.size);
+	}
 	if(recog_channel->recog_request) {
 		mpf_detector_event_e det_event = mpf_activity_detector_process(recog_channel->detector,frame);
 		switch(det_event) {
@@ -661,75 +685,93 @@ size_t write_data(void *ptr, size_t size, size_t nmemb, void *stream)
 static size_t read_callback(void *dest, size_t size, size_t nmemb, void *userp)
 {
   int tsize = 0;
-  printf(" read_callback size = %d   , nmemb %d\r\n ", size, nmemb);
-  
+  apt_log(RECOG_LOG_MARK,APT_PRIO_WARNING,"[pq] read_callback start--------------------------------------\n");
   struct pq_recog_channel_t *recog_channel = (struct pq_recog_channel_t *)userp;
-  struct WriteThis *wt = recog_channel->wt;
+  struct WriteThis* wt = &(recog_channel->wt);
   size_t buffer_size = size * nmemb;
 
-  printf(" read_callback  bhead_sizeleft:%d   ,  bend_sizeleft: %d \r\n ", recog_channel->bhead_sizeleft,recog_channel->bend_sizeleft);
   if(!wt->bhead) {
+	apt_log(RECOG_LOG_MARK,APT_PRIO_WARNING,"[pq] !wt->bhead--------------------------------------\n");
   	if(recog_channel->bhead_sizeleft == 0){
+		apt_log(RECOG_LOG_MARK,APT_PRIO_WARNING,"[pq] wt->bhead = TRUE go to VOICE_DATA--------------------------------------\n");
     	wt->bhead = TRUE;
 		goto VOICE_DATA;
   	}
 	if(recog_channel->bhead_sizeleft <= size*nmemb){
-		memcpy(dest,recog_channel->buffer,recog_channel->bhead_sizeleft);
+		apt_log(RECOG_LOG_MARK,APT_PRIO_WARNING,"[pq] recog_channel->bhead_sizeleft <= size*nmemb--------------------------------------\n");
+		memcpy(dest,recog_channel->head_str,recog_channel->bhead_sizeleft);
 		wt->bhead = TRUE;
 		return recog_channel->bhead_sizeleft;
 	}else{
 		memcpy(dest,recog_channel->buffer,size*nmemb);
-		recog_channel->buffer += size*nmemb;
+		recog_channel->head_str += size*nmemb;
 		recog_channel->bhead_sizeleft -= size*nmemb;
+		apt_log(RECOG_LOG_MARK,APT_PRIO_WARNING,"[pq] recog_channel->bhead_sizeleft >= size*nmemb--------------------------------------\n");
+		printf("bhead_sizeleft: %d\n",recog_channel->bhead_sizeleft);
 		return size*nmemb;
 	}
   }
   VOICE_DATA:
-  	if(!wt->bvoice){
-		if(recog_channel->status == RECOGNITION_COMPLETE){
-			if(recog_channel->bvoice_readsize == recog_channel->total_size){
-				wt->bvoice = TRUE;
-				goto END_DATA;
-			}
-			if(recog_channel->total_size - recog_channel->bvoice_readsize <= size*nmemb){
-				memcpy(dest,recog_channel->buffer+recog_channel->bvoice_readsize,recog_channel->total_size-recog_channel->bvoice_readsize);
-				wt->bvoice = TRUE;
-			    recog_channel->bvoice_readsize - recog_channel->total_size;
-				return recog_channel->total_size - recog_channel->bvoice_readsize;
-			}else{
-				memcpy(dest,recog_channel->buffer,size*nmemb);
-				recog_channel->bvoice_readsize += size*nmemb;
-				return size*nmemb;
-			}
-		}
-	else{
-VOICE_START:
-	pthread_mutex_lock(&(recog_channel->mutex));
-	if(recog_channel->bvoice_readsize == recog_channel->total_size){
-		sleep(1);
-		pthread_mutex_unlock(&(recog_channel->mutex));
-		if(recog_channel->status == RECOGNITION_COMPLETE){
+  if(!wt->bvoice){
+  	apt_log(RECOG_LOG_MARK,APT_PRIO_WARNING,"[pq] VOICE_DATA !wt->bvoice--------------------------------------\n");
+	if(recog_channel->status == RECOGNITION_COMPLETE){
+		if(recog_channel->bvoice_readsize == recog_channel->total_size){
+			apt_log(RECOG_LOG_MARK,APT_PRIO_WARNING,"[pq] RECOGNITION_COMPLETE && readsize == total_size--------------------------------------\n");
 			wt->bvoice = TRUE;
 			goto END_DATA;
 		}
-		goto VOICE_START;
-	}else{
 		if(recog_channel->total_size - recog_channel->bvoice_readsize <= size*nmemb){
+			apt_log(RECOG_LOG_MARK,APT_PRIO_WARNING,"[pq] total_size - bvoice_readsize <= size*nmemb\n");
+			memcpy(dest,recog_channel->buffer + recog_channel->bvoice_readsize, recog_channel->total_size-recog_channel->bvoice_readsize);
+			wt->bvoice = TRUE;
+			recog_channel->bvoice_readsize - recog_channel->total_size;
+			return recog_channel->total_size - recog_channel->bvoice_readsize;
+		}
+                else {
+			apt_log(RECOG_LOG_MARK,APT_PRIO_WARNING,"[pq] total_size - bvoice_readsize >= size*nmemb--------------\n");
+			memcpy(dest,recog_channel->buffer + recog_channel->bvoice_readsize, size*nmemb);
+			recog_channel->bvoice_readsize += size*nmemb;
+			return size*nmemb;
+		}
+	}
+	else{
+VOICE_START:
+	apt_log(RECOG_LOG_MARK,APT_PRIO_WARNING,"[pq] VOICE_START----------------------------\n");
+	pthread_mutex_lock(&(recog_channel->mutex));
+	if(recog_channel->bvoice_readsize == recog_channel->total_size){
+		apt_log(RECOG_LOG_MARK,APT_PRIO_WARNING,"[pq] bvoice_readsize == recog_channel->total_size   total_size:%d ,readsizeL%d--------------\n",recog_channel->total_size,recog_channel->bvoice_readsize);
+		pthread_mutex_unlock(&(recog_channel->mutex));
+		
+		if(recog_channel->status == RECOGNITION_COMPLETE){
+			apt_log(RECOG_LOG_MARK,APT_PRIO_WARNING,"[pq] recog_channel->status == RECOGNITION_COMPLETE-----------------\n");
+			wt->bvoice = TRUE;
+			goto END_DATA;
+		}
+                sleep(1);
+		goto VOICE_START;
+	}
+        else{
+		if(recog_channel->total_size - recog_channel->bvoice_readsize <= size*nmemb){
+			apt_log(RECOG_LOG_MARK,APT_PRIO_WARNING,"[pq] total_size - recog_channel->bvoice_readsize <= size*nmemb-----------------\n");
 			memcpy(dest,recog_channel->buffer+recog_channel->bvoice_readsize,recog_channel->total_size - recog_channel->bvoice_readsize);
+			int temp = recog_channel->bvoice_readsize;
 			recog_channel->bvoice_readsize = recog_channel->total_size;
 			pthread_mutex_unlock(&(recog_channel->mutex));
-			return recog_channel->total_size - recog_channel->bvoice_readsize;
+			return recog_channel->total_size - temp;
 		}else{
+			apt_log(RECOG_LOG_MARK,APT_PRIO_WARNING,"[pq] total_size - recog_channel->bvoice_readsize >= size*nmemb-----------------\n");
 			memcpy(dest,recog_channel->buffer,size*nmemb);
 			recog_channel->bvoice_readsize += size*nmemb;
 			pthread_mutex_unlock(&(recog_channel->mutex));
 			return size*nmemb;
 		}
-		}
-  		}
+            }
+          }
 	}
 END_DATA:
+	
 	if(!wt->bend){
+		apt_log(RECOG_LOG_MARK,APT_PRIO_WARNING,"[pq] END_DATA && !wt->bend-----------------\n");
 		memcpy(dest,recog_channel->end_str,strlen(recog_channel->end_str));
 		recog_channel->bend_sizeleft = 0;
 		wt->bend = TRUE;
@@ -742,20 +784,22 @@ END_DATA:
 //for http
 static int post(pq_recog_channel_t *recog_channel){
 	
-  
+  apt_log(RECOG_LOG_MARK,APT_PRIO_WARNING,"[pq] post start -----------------------------\n");
   CURLcode ret = curl_global_init(CURL_GLOBAL_ALL);
   if (ret < 0) {
     printf(" curl_global_init failed ret %d\r\n", ret); 
     return ret;
   }
+  //CURLM *multi = curl_multi_init();
   
+  FILE* fp = fopen("/usr/local/unimrcp/bin/1.t","w");
   CURL* curl = curl_easy_init();
   if (!curl) {
     printf(" curl_easy_init failed, handle nullptr");
   }
   //拼接host
   char* host_short = "Host: %s";
-  char* host_long  = NULL;
+  char* host_long  = malloc(strlen(host_short)+strlen(recog_channel->host)+5);
   sprintf(host_long , host_short , recog_channel->host);
  
  
@@ -764,7 +808,7 @@ static int post(pq_recog_channel_t *recog_channel){
   chunk = curl_slist_append(chunk, "Transfer-Encoding: chunked"); 
   chunk = curl_slist_append(chunk, "Connection: keep-alive");
   chunk = curl_slist_append(chunk, "Expect:"); 
-  chunk = curl_slist_append(chunk, host_long); //"Host: 1.202.136.28:1480"
+  //chunk = curl_slist_append(chunk, host_long); //"Host: 1.202.136.28:1480"
   chunk = curl_slist_append(chunk, "apikey: 8e306cd0195da10795db96f911a3cf5411965941a54f634a5314e031b504193a80f1f5c50cf3f6225cc9fe63efa9f6bb51ba1ac2d82a2ab35c3e99dae2a8c6fc0a9eb647e01e6bb07e3eab48539df3a7b7e8cf6be74caf64ff5e28d94e973f7da48c5c38937f965080bdd28b64d72e52ddbd23cd260569777c4717e70f15cb06"); 
   chunk = curl_slist_append(chunk, "Cache-Control: no-cache");
   chunk = curl_slist_append(chunk, "Pragma: no-cache");
@@ -776,19 +820,37 @@ static int post(pq_recog_channel_t *recog_channel){
   curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
   curl_easy_setopt(curl, CURLOPT_HEADER, 1L);
   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data);
-  curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void*)recog_channel->buffer);
+  curl_easy_setopt(curl, CURLOPT_WRITEDATA, fp);
   //setup data 
   curl_easy_setopt(curl, CURLOPT_HTTPHEADER, chunk);
   curl_easy_setopt(curl, CURLOPT_READFUNCTION, read_callback);
   curl_easy_setopt(curl, CURLOPT_READDATA,(void*)recog_channel);
+  //curl_easy_setopt(curl, CURLOPT_NOSIGNAL,1L);
+  //单线程
   curl_easy_perform(curl);
 
-  
   curl_easy_cleanup(curl);
   curl_global_cleanup();
-  curl_slist_free_all(chunk);
-  //fclose(wt.fp);
+  curl_slist_free_all(chunk); 
+  //curl_slist_free_all(chunk);
+  //多线程
+  //int running_handle = 3; 
+  //curl_multi_add_handle(multi, curl);
+  //curl_multi_perform(multi,&running_handle);
+  //curl_multi_remove_handle(multi,curl);
+  //curl_easy_cleanup(curl);
+  //curl_multi_cleanup(multi);
+ 
+ 
+  //curl_easy_cleanup(curl);
+  //curl_global_cleanup();
+ 
+  
+  //fclose(wt->fp);
   //fclose(fp);
+  fclose(fp);
+  free(host_long);
+  apt_log(RECOG_LOG_MARK,APT_PRIO_WARNING,"[pq] post end ------------------------------------\n");
   return 0;
 }
 
@@ -797,19 +859,25 @@ static int post(pq_recog_channel_t *recog_channel){
 //
 static apt_bool_t pq_recog_stream_recog(pq_recog_channel_t *recog_channel, const void *voice_data, unsigned int voice_len) {
   //TODO
+  apt_log(RECOG_LOG_MARK,APT_PRIO_WARNING,"[pq] recog_stream_recog start-----------------------------\n");
   if(FALSE == recog_channel->recog_started){
 	  apt_log(RECOG_LOG_MARK,APT_PRIO_INFO,"[pq] start recog");
 	  recog_channel->recog_started = TRUE;
   }
-  ;
+  
+  /* file = fopen("/usr/local/unimrcp/bin/1.wav","a+");
+  size_t t = fwrite(voice_data,1,voice_len,file);
+  fclose(file); */
+  
+  
   pthread_mutex_lock(&(recog_channel->mutex));
   
   recog_channel->buffer = (unsigned char *)realloc(recog_channel->buffer,recog_channel->total_size+voice_len);
   memcpy(recog_channel->buffer+recog_channel->total_size,voice_data,voice_len);
   recog_channel->total_size += voice_len;
-  
+  apt_log(RECOG_LOG_MARK,APT_PRIO_WARNING,"[pq] recog_stream_recog mutex_unlock -----------------------------\n");
   pthread_mutex_unlock(&(recog_channel->mutex));
-  printf("pq_recog_stream_recog end , total_size: %d\n, voice_len: %d",recog_channel->total_size,voice_len);
+  //printf("pq_recog_stream_recog end , total_size: %d\n, voice_len: %d",recog_channel->total_size,voice_len);
   
 }
 
@@ -822,12 +890,8 @@ static apt_bool_t pq_recog_start_of_input(pq_recog_channel_t *recog_channel)
 						RECOGNIZER_START_OF_INPUT,
 						recog_channel->recog_request->pool);
 	
+	apt_log(RECOG_LOG_MARK,APT_PRIO_WARNING,"[pq] start_of_input start -----------------------------\n");
 	
-	if(post(recog_channel)<0){
-		printf("post失败\n");
-	}else{
-		pirntf("post 成功\n");
-	}
 
 	
 	if(!message) {

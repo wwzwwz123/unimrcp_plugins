@@ -47,10 +47,10 @@ struct mpf_activity_detector_t {
 MPF_DECLARE(mpf_activity_detector_t*) mpf_activity_detector_create(apr_pool_t *pool)
 {
 	mpf_activity_detector_t *detector = apr_palloc(pool,sizeof(mpf_activity_detector_t));
-	detector->level_threshold = 2; /* 0 .. 255 */
-	detector->speech_timeout = 300; /* 0.3 s */
-	detector->silence_timeout = 300; /* 0.3 s */
-	detector->noinput_timeout = 5000; /* 5 s */
+	detector->level_threshold = 50; /* 0 .. 255 */
+	detector->speech_timeout = 300; /* 0.3 s  = 300*/
+	detector->silence_timeout = 1000; /* 0.3 s  =300 */
+	detector->noinput_timeout = 5000; /* 5 s =5000*/
 	detector->duration = 0;
 	detector->state = DETECTOR_STATE_INACTIVITY;
 	return detector;
@@ -122,7 +122,7 @@ MPF_DECLARE(mpf_detector_event_e) mpf_activity_detector_process(mpf_activity_det
 		/* first, calculate current activity level of processed frame */
 		level = mpf_activity_detector_level_calculate(frame);
 #if 0
-		apt_log(APT_LOG_MARK,APT_PRIO_INFO,"Activity Detector [%"APR_SIZE_T_FMT"]",level);
+		apt_log(APT_LOG_MARK,APT_PRIO_INFO,"Activity Detector --------------------- [%"APR_SIZE_T_FMT"]",level);
 #endif
 	}
 
