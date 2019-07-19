@@ -32,9 +32,16 @@
 #include <pthread.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <json/json.h>
 
- 
- 
+#include <libxml/parser.h>
+#include <libxml/tree.h>
+#include <libxml/xpath.h>
+#include <libxml/xpathInternals.h>
+#include <libxml/xmlmemory.h>
+#include <libxml/xpointer.h>
+
+
 
 #include "mrcp_recog_engine.h"
 #include "mpf_activity_detector.h"
@@ -42,7 +49,8 @@
 #include "apt_log.h"
 
 #define RECOG_ENGINE_TASK_NAME "PQ Recog Engine"
-
+#define XML_FILENAME "/usr/local/unimrcp/conf/recog.xml"
+#define NLP_XML_FILENAME "/usr/local/unimrcp/bin/nlp-result.rep"
 FILE* file = NULL;
 typedef struct pq_recog_engine_t pq_recog_engine_t;
 typedef struct pq_recog_channel_t pq_recog_channel_t;
@@ -62,6 +70,16 @@ typedef enum{
   RECOGNITION_INPUT
 }stream_status;
 static apt_bool_t pq_recog_start_of_input(pq_recog_channel_t *recog_channel);
+
+//ME
+xmlDocPtr getDocRoot(char * filename);
+int freeDocRoot(xmlDocPtr pdoc);
+void httpSplit(xmlDocPtr pdoc,char *httpstr);
+char * getCurAttribute(xmlDocPtr pdoc,char * title,char* sttstr);
+xmlXPathObjectPtr getNodeset(xmlDocPtr pdoc,const xmlChar *xpath);
+void get_value(char* value,pq_recog_channel_t *recog_channel);
+void nlp_post(pq_recog_channel_t *recog_channel);
+const char* get_json_nlp(FILE* fp);
 
 
 
@@ -142,20 +160,21 @@ struct pq_recog_channel_t {
     const char*             last_result;
     apt_bool_t              recog_started;
 
-	const char              *head_str;
-	const char              *end_str;
+	char                    *head_str;
+	char                    *end_str;
   	const char 				*url;
   	const char 				*host;
   	const char 				*filename;
 	int                     bhead_sizeleft;
 	int                     bvoice_readsize;
 	int                     bend_sizeleft;
-	
+	const char              *result_filename;
 	int                     total_size;
     unsigned char*          buffer;
 	WriteThis               wt;
 	pthread_mutex_t         mutex;
 	stream_status           status;
+	const char*             data_nlp;
        // pthread_t               post_thread;
 	
 	
@@ -189,6 +208,12 @@ MRCP_PLUGIN_LOG_SOURCE_IMPLEMENT(RECOG_PLUGIN,"RECOG-PLUGIN")
 
 /** Use custom log source mark */
 #define RECOG_LOG_MARK   APT_LOG_MARK_DECLARE(RECOG_PLUGIN)
+
+struct config {
+	
+};
+
+//config global_config;
 
 /** Create pq recognizer engine */
 MRCP_PLUGIN_DECLARE(mrcp_engine_t*) mrcp_plugin_create(apr_pool_t *pool)
@@ -273,17 +298,34 @@ static mrcp_engine_channel_t* pq_recog_engine_channel_create(mrcp_engine_t *engi
 	recog_channel->wt.bhead = FALSE;
 	recog_channel->wt.bvoice = FALSE;
 	
-	recog_channel->filename = "/root/tts.wav";
-	recog_channel->url = "http://1.202.136.28:8086/QianYuSrv/uploader?aaa=1";
-	recog_channel->host= "1.202.136.28";
-	recog_channel->head_str = "------------V2ymHFg03ehbqgZCaKO6jy\r\nContent-Disposition: form-data;name=\"/root/tts.wav\";opcode=\"transcribe_audio\";sessionid=\"session:1\";tmp_entry_id=\"2107512132\";filename=\"/root/tts.wav\";type=\"11\";time=\"1528968385149\";reqid=\"485969d2-0c93-42cd-bcd5-4f3c1ccabccb\";latitude=\"-1\";location=\"-1\";language=\"chinese\";uId=\"null\";kId=\"102\";aId=\"TEST-APP-ID\";grammarname=\"\";contentId=\"session:1\";sceneId=\"-1\";sr=\"1\";isAddPunct=\"off\";isTransDigit=\"on\";isButterFly=\"off\";\r\n\r\n";
-	recog_channel->end_str = "\r\n------------V2ymHFg03ehbqgZCaKO6jy--\r\n";
+	
+	xmlDocPtr pdoc = getDocRoot(XML_FILENAME);
+	
+	recog_channel->filename = getCurAttribute(pdoc,"asr","filename");
+	recog_channel->url = getCurAttribute(pdoc,"asr","url");
+	recog_channel->host= getCurAttribute(pdoc,"asr","host");
+	recog_channel->result_filename= getCurAttribute(pdoc,"recog_result","filename");
+	
+	//recog_channel->head_str = "------------V2ymHFg03ehbqgZCaKO6jy\r\nContent-Disposition: form-data;name=\"/root/tts.wav\";opcode=\"transcribe_audio\";sessionid=\"session:1\";tmp_entry_id=\"2107512132\";filename=\"/root/tts.wav\";type=\"11\";time=\"1528968385149\";reqid=\"485969d2-0c93-42cd-bcd5-4f3c1ccabccb\";latitude=\"-1\";location=\"-1\";language=\"chinese\";uId=\"null\";kId=\"102\";aId=\"TEST-APP-ID\";grammarname=\"\";contentId=\"session:1\";sceneId=\"-1\";sr=\"1\";isAddPunct=\"off\";isTransDigit=\"on\";isButterFly=\"off\";\r\n\r\n";
+	//recog_channel->end_str = "\r\n------------V2ymHFg03ehbqgZCaKO6jy--\r\n";
+	//recog_channel->head_str = (char*)malloc(1024);
+	recog_channel->head_str = (char*)malloc(1024);
+	recog_channel->end_str = (char*)malloc(100);
+	httpSplit(pdoc,recog_channel->head_str);
+	sprintf(recog_channel->end_str,"\r\n%s--\r\n",getCurAttribute(pdoc,"httpheads","head_str"));
+	
+	apt_log(RECOG_LOG_MARK,APT_PRIO_WARNING,"[pq] head_str:%s,end_str:%s++++++++++++++++++++++++++++++\n",recog_channel->head_str,recog_channel->end_str);
+	freeDocRoot(pdoc);
+	
+	
+	
+	
 	
 	recog_channel->bhead_sizeleft = strlen(recog_channel->head_str);
 	recog_channel->bvoice_readsize = 0;
 	recog_channel->bend_sizeleft = strlen(recog_channel->end_str);
 	recog_channel->total_size = 0;
-
+    recog_channel->data_nlp = "{\"endingId\": \"b04c10ce0bd65c77082b39a2cc6b02d4460c94766a31b01b8dea\",\"isNew\": 1,\"text\": \"%s\", \"time\": 1542696677,\"extra\": {\"user\" :{\"company\": \"dianxin\",\"name\": \"kexin\"}}}";//eventId:[\"answerCall\"]
 	pthread_mutex_init(&recog_channel->mutex, NULL);
 	recog_channel->status = RECOGNITION_INPUT;
 	
@@ -513,9 +555,15 @@ static apt_bool_t pq_recog_recognition_complete(pq_recog_channel_t *recog_channe
     apt_log(RECOG_LOG_MARK,APT_PRIO_WARNING,"[pq] recognition_complete start ------------------------------------\n");
 
 	recog_channel->status = RECOGNITION_COMPLETE;
-
-
-        apt_log(RECOG_LOG_MARK, APT_PRIO_WARNING, " PQ POST\r\n");
+    //NLP
+	nlp_post(recog_channel);
+	//获取last_result
+	FILE* fp = fopen("/usr/local/unimrcp/bin/nlp-result.rep","r");
+	recog_channel->last_result = get_json_nlp(fp);
+	apt_log(RECOG_LOG_MARK,APT_PRIO_WARNING,"[pq] head_str end_str shi fang  ------------------------------------\n");
+	
+	
+	apt_log(RECOG_LOG_MARK, APT_PRIO_WARNING, " PQ POST\r\n");
 	if(post(recog_channel)<0) {
 		apt_log(RECOG_LOG_MARK,APT_PRIO_WARNING,"[pq] post false -----------------------------\n");
 	}else{
@@ -674,6 +722,74 @@ static apt_bool_t pq_recog_msg_process(apt_task_t *task, apt_task_msg_t *msg)
 	return TRUE;
 }
 //$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$
+xmlDocPtr getDocRoot(char * filename)
+{
+	xmlDocPtr pdoc = NULL;
+	xmlKeepBlanksDefault(0);
+	pdoc = xmlReadFile (filename, "UTF-8", XML_PARSE_RECOVER);
+	if (pdoc == NULL)
+    {
+      printf ("error:can't open file!\n");
+      return NULL;
+	}
+	return pdoc;
+}
+int freeDocRoot(xmlDocPtr pdoc)
+{
+    xmlFreeDoc (pdoc);
+	xmlCleanupParser();
+	xmlMemoryDump();
+}
+
+char * getCurAttribute(xmlDocPtr pdoc,char * title,char* sttstr)
+{
+    xmlNodePtr proot = NULL, pcur = NULL;	
+	proot = xmlDocGetRootElement (pdoc);
+    if (proot == NULL)
+    {
+	  printf ("error: file is empty!\n");
+      return 0;
+    }
+    pcur = proot->xmlChildrenNode;
+	while (pcur != NULL)
+    {
+		if (!xmlStrcmp(pcur->name, BAD_CAST(title)))
+		{	
+		  return (char *)xmlGetProp(pcur, sttstr);
+		}
+		pcur = pcur->next;
+	}	
+}
+void httpSplit(xmlDocPtr pdoc,char *httpstr)
+{
+	char * head_str = getCurAttribute(pdoc,"httpheads","head_str");
+	char * disposition = getCurAttribute(pdoc,"httpheads","disposition");
+	char * name = getCurAttribute(pdoc,"httpheads","name");
+	char * opcode = getCurAttribute(pdoc,"httpheads","opcode");
+	char * sessionid = getCurAttribute(pdoc,"httpheads","sessionid");
+	char * tmp_entry_id = getCurAttribute(pdoc,"httpheads","tmp_entry_id");
+	char * type = getCurAttribute(pdoc,"httpheads","type");
+	char * time = getCurAttribute(pdoc,"httpheads","time");
+	char * reqid = getCurAttribute(pdoc,"httpheads","reqid");
+	char * latitude = getCurAttribute(pdoc,"httpheads","latitude");
+	char * location = getCurAttribute(pdoc,"httpheads","location");
+	char * language = getCurAttribute(pdoc,"httpheads","language");
+	char * uId = getCurAttribute(pdoc,"httpheads","uId");
+	char * kId = getCurAttribute(pdoc,"httpheads","kId");
+	char * aId = getCurAttribute(pdoc,"httpheads","aId");
+	char * grammarname = getCurAttribute(pdoc,"httpheads","grammarname");
+	char * contentId = getCurAttribute(pdoc,"httpheads","contentId");
+	char * sceneId = getCurAttribute(pdoc,"httpheads","sceneId");
+	char * sr = getCurAttribute(pdoc,"httpheads","sr");
+	char * isAddPunct = getCurAttribute(pdoc,"httpheads","isAddPunct");
+	char * isTransDigit = getCurAttribute(pdoc,"httpheads","isTransDigit");
+	char * isButterFly = getCurAttribute(pdoc,"httpheads","isButterFly");	
+		
+	sprintf(httpstr, "%s\r\n%s;name=\"%s\";opcode=\"%s\";sessionid=\"%s\";tmp_entry_id=\"%s\";filename=\"%s\";type=\"%s\";time=\"%s\";reqid=\"%s\";latitude=\"%s\";location=\"%s\";language=\"%s\";uId=\"%s\";kId=\"%s\";aId=\"%s\";grammarname=\"%s\";contentId=\"%s\";sceneId=\"%s\";sr=\"%s\";isAddPunct=\"%s\";isTransDigit=\"%s\";isButterFly=\"%s\";\r\n\r\n", 
+	        head_str,disposition,name,opcode,sessionid,tmp_entry_id,name,type,time,reqid,latitude,location,language,uId,kId,aId,grammarname,
+			contentId,sceneId,sr,isAddPunct,isButterFly,isButterFly);
+		return;
+}
 //for http write_data
 size_t write_data(void *ptr, size_t size, size_t nmemb, void *stream)
 {
@@ -685,10 +801,12 @@ size_t write_data(void *ptr, size_t size, size_t nmemb, void *stream)
 static size_t read_callback(void *dest, size_t size, size_t nmemb, void *userp)
 {
   int tsize = 0;
-  apt_log(RECOG_LOG_MARK,APT_PRIO_WARNING,"[pq] read_callback start--------------------------------------\n");
+  
   struct pq_recog_channel_t *recog_channel = (struct pq_recog_channel_t *)userp;
   struct WriteThis* wt = &(recog_channel->wt);
   size_t buffer_size = size * nmemb;
+  
+  apt_log(RECOG_LOG_MARK,APT_PRIO_WARNING,"[pq] read_callback start-----------------------head_str:%s\n",recog_channel->head_str);
 
   if(!wt->bhead) {
 	apt_log(RECOG_LOG_MARK,APT_PRIO_WARNING,"[pq] !wt->bhead--------------------------------------\n");
@@ -785,14 +903,14 @@ END_DATA:
 static int post(pq_recog_channel_t *recog_channel){
 	
   apt_log(RECOG_LOG_MARK,APT_PRIO_WARNING,"[pq] post start -----------------------------\n");
-  CURLcode ret = curl_global_init(CURL_GLOBAL_ALL);
+  /* CURLcode ret = curl_global_init(CURL_GLOBAL_ALL);
   if (ret < 0) {
     printf(" curl_global_init failed ret %d\r\n", ret); 
     return ret;
-  }
+  } */
   //CURLM *multi = curl_multi_init();
   
-  FILE* fp = fopen("/usr/local/unimrcp/bin/1.t","w");
+  FILE* fp = fopen(recog_channel->result_filename,"w");
   CURL* curl = curl_easy_init();
   if (!curl) {
     printf(" curl_easy_init failed, handle nullptr");
@@ -818,7 +936,7 @@ static int post(pq_recog_channel_t *recog_channel){
   curl_easy_setopt(curl, CURLOPT_URL, recog_channel->url);//"http://1.202.136.28:1480/QianYuSrv/uploader?aaa=1"
   curl_easy_setopt(curl, CURLOPT_POST, 1L);
   curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
-  curl_easy_setopt(curl, CURLOPT_HEADER, 1L);
+  //curl_easy_setopt(curl, CURLOPT_HEADER, 1L);
   curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data);
   curl_easy_setopt(curl, CURLOPT_WRITEDATA, fp);
   //setup data 
@@ -850,6 +968,8 @@ static int post(pq_recog_channel_t *recog_channel){
   //fclose(fp);
   fclose(fp);
   free(host_long);
+  free(recog_channel->head_str);
+  free(recog_channel->end_str);
   apt_log(RECOG_LOG_MARK,APT_PRIO_WARNING,"[pq] post end ------------------------------------\n");
   return 0;
 }
@@ -865,15 +985,15 @@ static apt_bool_t pq_recog_stream_recog(pq_recog_channel_t *recog_channel, const
 	  recog_channel->recog_started = TRUE;
   }
   
-  /* file = fopen("/usr/local/unimrcp/bin/1.wav","a+");
-  size_t t = fwrite(voice_data,1,voice_len,file);
-  fclose(file); */
-  
-  
   pthread_mutex_lock(&(recog_channel->mutex));
   
   recog_channel->buffer = (unsigned char *)realloc(recog_channel->buffer,recog_channel->total_size+voice_len);
   memcpy(recog_channel->buffer+recog_channel->total_size,voice_data,voice_len);
+  //存储语音流
+  file = fopen("/usr/local/unimrcp/bin/1.wav","a+");
+  size_t t = fwrite(voice_data,1,voice_len,file);
+  fclose(file);
+  
   recog_channel->total_size += voice_len;
   apt_log(RECOG_LOG_MARK,APT_PRIO_WARNING,"[pq] recog_stream_recog mutex_unlock -----------------------------\n");
   pthread_mutex_unlock(&(recog_channel->mutex));
@@ -905,6 +1025,128 @@ static apt_bool_t pq_recog_start_of_input(pq_recog_channel_t *recog_channel)
 }
 
 
+
+//NLP
+static size_t write_data_nlp(void *ptr, size_t size, size_t nmemb, void *stream)
+{
+	apt_log(RECOG_LOG_MARK,APT_PRIO_WARNING,"[pq] write_data_nlp size %u nmemb %u\n",size,nmemb);
+    int written = fwrite(ptr, size, nmemb, stream);
+    return written;
+}
+
+void nlp_post(pq_recog_channel_t *recog_channel){
+	
+	apt_log(RECOG_LOG_MARK,APT_PRIO_WARNING,"[pq] nlp_post start");
+	FILE* fp = fopen(NLP_XML_FILENAME,"w");
+
+//sprintf
+    char* value = (char*)malloc(1024);
+    get_value(value,recog_channel);
+    char* data_all = (char*)malloc(strlen(recog_channel->data_nlp)+strlen(value)+10);
+    sprintf(data_all,recog_channel->data_nlp,value);
+	
+	apt_log(RECOG_LOG_MARK,APT_PRIO_WARNING,"[pq] nlp_post data_all:%s , value : %s \n",data_all,value);
+    free(value);
+    CURL* curl = curl_easy_init();
+    if (!curl) {
+        printf(" curl_easy_init failed, handle nullptr");
+    }
+
+    struct curl_slist *chunk = NULL;
+    chunk = curl_slist_append(chunk, "Content-Type: application/json;charset=UTF-8");
+    curl_easy_setopt(curl, CURLOPT_URL, "http://39.98.248.75:8080/DMService/api/v2/parser?appKey=7804fe8d41d04028bbb6579fa157cbab&userId=1");
+    curl_easy_setopt(curl, CURLOPT_POST, 1L);
+    curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);
+    //curl_easy_setopt(curl, CURLOPT_HEADER, 1L);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_data_nlp);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, fp);
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, chunk);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, data_all);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, strlen(data_all));
+    curl_easy_perform(curl);
+    curl_easy_cleanup(curl);
+    curl_global_cleanup();
+    fclose(fp);
+	free(data_all);
+    return 0;
+}
+
+
+xmlXPathObjectPtr getNodeset(xmlDocPtr pdoc,const xmlChar *xpath)
+{
+    xmlXPathContextPtr context=NULL;//XPath上下文指针
+    xmlXPathObjectPtr result=NULL; //XPath结果指针
+    context = xmlXPathNewContext(pdoc);
+
+    if(pdoc==NULL){
+	    apt_log(RECOG_LOG_MARK,APT_PRIO_WARNING,"[pq] pdoc is NULL\n");
+        return NULL;
+    }
+
+    if(xpath){
+    if (context == NULL) {
+		apt_log(RECOG_LOG_MARK,APT_PRIO_WARNING,"[pq] context is NULL\n");
+        return NULL;
+    }
+
+    result = xmlXPathEvalExpression(xpath, context);
+    xmlXPathFreeContext(context); //释放上下文指针
+    if (result == NULL) {
+		apt_log(RECOG_LOG_MARK,APT_PRIO_WARNING,"[pq] xmlXPathEvalExpression return NULL\n");
+        return NULL;
+    }
+
+    if (xmlXPathNodeSetIsEmpty(result->nodesetval)) {
+        xmlXPathFreeObject(result);
+		apt_log(RECOG_LOG_MARK,APT_PRIO_WARNING,"[pq] nodeset is empty\n");
+        return NULL;
+    }
+}
+    return result;
+}
+
+
+void get_value(char* value,pq_recog_channel_t *recog_channel){
+    xmlDocPtr pdoc = NULL;
+    xmlNodePtr proot = NULL;
+
+    xmlKeepBlanksDefault(0);//必须加上，防止程序把元素前后的空白文本符号当作一个node
+    pdoc = xmlReadFile (recog_channel->result_filename, "UTF-8", XML_PARSE_RECOVER);//libxml只能解析UTF-8格式数据
+    if(pdoc == NULL){
+	  apt_log(RECOG_LOG_MARK,APT_PRIO_WARNING,"[pq] pdoc error!\n");
+      return;
+    }
+    xmlChar* xpath = BAD_CAST("//value");
+    xmlXPathObjectPtr result = getNodeset(pdoc, xpath);
+    if(result == NULL){
+		apt_log(RECOG_LOG_MARK,APT_PRIO_WARNING,"[pq] result is NULL\n");
+        return;
+    }else{
+    xmlNodeSetPtr nodeset = result->nodesetval;
+    xmlNodePtr cur = nodeset->nodeTab[0];
+        if(cur != NULL){
+            strcpy(value,((char*)XML_GET_CONTENT(cur->xmlChildrenNode)));
+        }
+    }
+
+//释放
+    xmlXPathFreeObject(result);
+    xmlFreeDoc (pdoc);
+    xmlCleanupParser ();
+    xmlMemoryDump ();
+    return;
+}
+const char* get_json_nlp(FILE* fp){
+    struct json_object* cmd = NULL;
+    char* buffer = (char*)malloc(1024);
+    struct json_object *pobj;
+    size_t fp_len = fread(buffer,1,1023,fp);
+    pobj = json_tokener_parse(buffer);
+    cmd = json_object_object_get(json_object_object_get(json_object_object_get(pobj,"data"),"answer"),"tts");
+    const char* tts = json_object_get_string(cmd);
+	free(buffer);
+	return tts;
+}
 
 
 

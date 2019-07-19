@@ -22,3 +22,8 @@ if PQRECOG_PLUGIN
 SUBDIRS               += pq-recog
 endif
 
+if PQSYNTH_PLUGIN
+SUBDIRS               += pq-synth
+endif
+
+

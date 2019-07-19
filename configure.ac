@@ -175,6 +175,13 @@ UNI_PLUGIN_ENABLED(demosynth)
 
 AM_CONDITIONAL([DEMOSYNTH_PLUGIN],[test "${enable_demosynth_plugin}" = "yes"])
 
+dnl PQ synthesizer plugin.
+UNI_PLUGIN_ENABLED(pqsynth)
+
+AM_CONDITIONAL([PQSYNTH_PLUGIN],[test "${enable_pqsynth_plugin}" = "yes"])
+
+
+
 dnl Demo recognizer plugin.
 UNI_PLUGIN_ENABLED(demorecog)
 
@@ -227,6 +234,7 @@ AC_CONFIG_FILES([
     plugins/demo-recog/Makefile
     plugins/demo-verifier/Makefile
     plugins/pq-recog/Makefile
+    plugins/pq-synth/Makefile
     platforms/Makefile
     platforms/libunimrcp-server/Makefile
     platforms/libunimrcp-client/Makefile
@@ -280,6 +288,7 @@ echo Demo recognizer plugin........ : $enable_demorecog_plugin
 echo Demo verifier plugin.......... : $enable_demoverifier_plugin
 echo Recorder plugin............... : $enable_recorder_plugin
 echo PQ recognizer plugin.......... : $enable_pqrecog_plugin
+echo PQ synthesizer plugin......... : $enable_pqsynth_plugin
 echo
 echo Installation layout........... : $layout_name
 echo Installation directory........ : $prefix

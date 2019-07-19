@@ -32,6 +32,7 @@
       <resource id="recorder" enable="false"/>
       <resource id="speakverify" enable="fasle"/>
       <resource id="pqrecog" name="pqrecog" enable="true"/>
+      <resource id="pqsynth" name="pqsynth" enable="true"/>
     </resource-factory>
 
     <!-- SofiaSIP MRCPv2 signaling agent -->

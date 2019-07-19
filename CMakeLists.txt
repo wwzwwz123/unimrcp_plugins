@@ -89,6 +89,7 @@ add_subdirectory (plugins/demo-synth)
 add_subdirectory (plugins/demo-verifier)
 add_subdirectory (plugins/mrcp-recorder)
 add_subdirectory (plugins/pq-recog)
+add_subdirectory (plugins/pq-synth)
 
 # Sub-projects: platform libraries
 add_subdirectory (platforms/libunimrcp-client)
